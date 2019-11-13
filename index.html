@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+ <head>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+   <title>Packer</title>
+   <script src="lib/dat.gui.min.js"></script>
+   <script src="lib/clipper.js"></script>
+   <script src="packer.js"></script>
+   <style>
+    body { color: #ccc; background-color: #111; }
+    svg * { fill: #666; stroke: #999; }
+   </style>
+ </head>
+ <body>
+  <div id="input"></div>
+  <div id="result"></div>
+  <script>
+  const NS = 'http://www.w3.org/2000/svg'
+  const SVG = (polygons) => {
+    const svg = document.createElementNS(NS, 'svg')
+    polygons.forEach((points) => {
+      const n = document.createElementNS(NS, 'polygon')
+      n.setAttribute('points', points.map((p) => `${p.x},${p.y}`).join(' '))
+      svg.appendChild(n)
+    })
+    return svg
+  }
+
+  const gui = new dat.GUI()
+  const packer = new Packer()
+  const result = document.getElementById('result')
+  const display = { el: document.getElementById('input'), svg: null }
+
+  const configFolder = gui.addFolder('config')
+  configFolder.add(packer, 'width', 0, 600)
+  configFolder.add(packer, 'height', 0, 600)
+  configFolder.add(packer, 'spacing', 0, 10)
+  configFolder.add(packer, 'rotations', 1, 8, 1)
+
+  const randFolder = gui.addFolder('random')
+
+  const randPoint = (s) => ({x: Math.random() * s, y: Math.random() * s})
+  const randShape = {
+    tri: (s) => [0,0,0].map(() => randPoint(s)),
+    rect: (s) => {
+      const {x, y} = randPoint(s)
+      return [[x, y], [0, y], [0, 0], [x, 0]].map(([x, y]) => ({x, y}))
+    }
+  }
+
+  const randMenu = { n: 20, min: 50, range: 100, shape: 'rect' }
+
+  randMenu.generate = () => {
+    const shape = randShape[randMenu.shape]
+    const range = [...Array(randMenu.n||20).keys()]
+    chooseParts(range.map((i) => shape(Math.random() * randMenu.range + randMenu.min)))
+  }
+
+  randFolder.add(randMenu, 'n', 3, 50, 1)
+  randFolder.add(randMenu, 'min', 10, 100)
+  randFolder.add(randMenu, 'range', 10, 100)
+  randFolder.add(randMenu, 'shape', Object.keys(randShape))
+  randFolder.add(randMenu, 'generate')
+
+  const chooseParts = (parts) => {
+    packer.load(parts)
+    display.svg = SVG(parts)
+    display.el.innerHTML = ''
+    display.el.appendChild(display.svg)
+  }
+
+  const showResult = (packed) => {
+    if (!packed) return
+    const clone = [...display.svg.childNodes].map((n) => n.cloneNode(false))
+    result.innerHTML = ''
+    packed.bins.forEach((bin) => {
+      const ns = display.svg.cloneNode(false)
+      ns.setAttribute('width', `${packer.width}px`)
+      ns.setAttribute('height', `${packer.height}px`)
+      ns.setAttribute('viewBox', `0 0 ${packer.width} ${packer.height}`)
+      bin.forEach((p) => {
+        const g = document.createElementNS(NS, 'g')
+        g.setAttribute('transform', p.transform)
+        g.appendChild(clone[p.id])
+        ns.appendChild(g)
+      })
+      result.appendChild(ns)
+    })
+  }
+
+  const menu = {
+    sample: '',
+    nest: () => packer.start().then(showResult),
+  }
+
+  const testPacks = {
+    test: [
+      [{x: 1, y: 1}, {x: 23, y: 0}, {x: 40, y: 20}],
+      [{x: 3, y: 20}, {x: 12, y: 11}, {x: 54, y: 30}],
+      [{x: 90, y: 80}, {x: 41, y: 30}, {x: 20, y: 50}],
+    ],
+    rect: [
+      [{x: 1, y: 1}, {x: 23, y: 1}, {x: 23, y: 20}, {x: 1, y: 20}],
+      [{x: 3, y: 20}, {x: 12, y: 20}, {x: 12, y: 30}, {x: 3, y: 30}],
+      [{x: 41, y: 80}, {x: 41, y: 30}, {x: 20, y: 30}, {x: 20, y: 80}],
+    ],
+  }
+
+  gui.add(menu, 'sample', Object.keys(testPacks)).onChange((v) => chooseParts(testPacks[v]))
+  gui.add(menu, 'nest')
+
+  randMenu.generate()
+  </script>
+ </body>
+</html>

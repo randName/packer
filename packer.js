@@ -66,8 +66,8 @@ class Packer {
     // max error allowed when rasterizing curves
     this.tolerance = 0.3
 
-    // scale for ClipperJS
-    this.clipperScale = 10000000
+    // scale for Clipper
+    this.clipperScale = 10000
 
     this.parts = null
     this.NFPs = new Map()
@@ -135,6 +135,7 @@ class Packer {
   }
 
   load (polygons) {
+    this.NFPs.clear()
     this.parts = polygons.map((poly, id) => {
       const simple = Clipper.SimplifyPolygon(this.toClipper(poly), NonZero)
       if(!simple || simple.length === 0) return
@@ -143,10 +144,8 @@ class Packer {
         const a = Math.abs(Clipper.Area(s))
         return (b === null || a > b[0]) ? [a, s] : b
       }, null)[1], this.clipperTolerance)
-
-      return (path && path.length > 2) ? { path, id } : null
+      return (path && path.length > 2) ? { id, path } : null
     }).filter((p) => p)
-    this.NFPs.clear()
   }
 
   render (prefab) {
@@ -156,7 +155,6 @@ class Packer {
         id, a: Math.abs(Clipper.Area(path)) * fz()
       })).sort((a, b) => b.a - a.a)
     }
-
     return prefab.map((p) => {
       const part = this.parts.find((q) => p.id === q.id)
       const ro = p.ro || Math.floor(Math.random() * this.rotations)
@@ -179,7 +177,6 @@ class Packer {
     }).flat().filter((p) => !this.NFPs.has(p.join('|')))
 
     if (pairs.length) {
-      console.log(`[packer] created ${pairs.length} pairs`)
       const nfps = await this.generateNFPs(pairs, onProgress)
       console.log(`[packer] generated ${nfps} NFPs`)
     }
@@ -200,7 +197,6 @@ class Packer {
     const diff = new Clipper(), union = new Clipper()
     const combined = new ClipperLib.Paths()
     const subtracted = new ClipperLib.Paths()
-
     const found = placed.map((p) => {
       const nfp = this.NFPs.get([p, part].join('|'))
       if (!nfp) return false

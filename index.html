@@ -39,7 +39,16 @@
 
   const randFolder = gui.addFolder('random')
 
+  const center = (points) => {
+    const xs = points.map((p) => p.x), ys = points.map((p) => p.y)
+    const minx = Math.min(...xs), miny = Math.min(...ys)
+    const mx = (Math.max(...xs) - minx) * 0.5 + minx
+    const my = (Math.max(...ys) - miny) * 0.5 + miny
+    return points.map((p) => ({ x: p.x - mx, y: p.y - my }))
+  }
+
   const randPoint = (s) => ({x: Math.random() * s, y: Math.random() * s})
+
   const randShape = {
     tri: (s) => [0,0,0].map(() => randPoint(s)),
     rect: (s) => {
@@ -48,16 +57,17 @@
     }
   }
 
-  const randMenu = { n: 20, min: 50, range: 100, shape: 'rect' }
+  const randMenu = { n: 20, min: 100, range: 50, shape: 'rect' }
 
   randMenu.generate = () => {
     const shape = randShape[randMenu.shape]
     const range = [...Array(randMenu.n||20).keys()]
-    chooseParts(range.map((i) => shape(Math.random() * randMenu.range + randMenu.min)))
+    const scale = range.map(() => Math.random() * randMenu.range)
+    chooseParts(scale.map((s) => center(shape(s + randMenu.min))))
   }
 
   randFolder.add(randMenu, 'n', 3, 50, 1)
-  randFolder.add(randMenu, 'min', 10, 100)
+  randFolder.add(randMenu, 'min', 10, 200)
   randFolder.add(randMenu, 'range', 10, 100)
   randFolder.add(randMenu, 'shape', Object.keys(randShape))
   randFolder.add(randMenu, 'generate')

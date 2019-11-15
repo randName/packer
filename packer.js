@@ -16,35 +16,28 @@ const bounds = (points) => {
   return { width: maxX - minX, height: maxY - minY, minX, maxX, minY, maxY }
 }
 
-const weight = (points) => {
-  const bd = bounds(points)
-  return bd.width * 2 + bd.height
-}
-
-class Part {
+class Placement {
   constructor (id, path, ro, scale, angle) {
     this.id = id
     this.ro = ro
     this.scale = scale
     this.angle = angle || 0
 
-    const s = path[0], e = path[path.length-1]
-    if (Math.hypot(s.X - e.X, s.Y - e.Y) < 1000) path.pop()
-    if (Clipper.Area(path) > 0) path.reverse()
-
-    this.path = path
+    const {X, Y} = path[0]
+    this.origin = {X: -X, Y: -Y}
+    this.path = translate(path, this.origin)
     Object.assign(this, bounds(path))
   }
 
-  get p0 () { return this.path[0] }
-  get x () { return (this.X / this.scale) || 0 }
-  get y () { return (this.Y / this.scale) || 0 }
+  get x () { return ((this.X + this.origin.X) / this.scale) || 0 }
+
+  get y () { return ((this.Y + this.origin.Y) / this.scale) || 0 }
 
   get transform () {
     return `translate(${this.x} ${this.y}) rotate(${this.angle})`
   }
 
-  assign (p) { return Object.assign(this, p) }
+  put (p) { return Object.assign(this, p) }
   toString () { return `${this.id}|${this.ro}` }
 }
 
@@ -57,7 +50,7 @@ class Packer {
     // space between parts
     this.spacing = 5.5
 
-    // number of rotations to consider
+    // maximum number of rotations to consider
     this.rotations = 4
 
     // minimum fuzz multiplier for polygon area
@@ -91,9 +84,9 @@ class Packer {
     return np[0]
   }
 
-  getBinNFP (part) {
-    const x1 = part.p0.X - part.minX, x2 = part.p0.X - part.maxX + this.bin.X
-    const y1 = part.p0.Y - part.minY, y2 = part.p0.Y - part.maxY + this.bin.Y
+  getIFP (placement) {
+    const x1 = -placement.minX, x2 = this.bin.X - placement.maxX
+    const y1 = -placement.minY, y2 = this.bin.Y - placement.maxY
     const p = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]].map(([X, Y]) => ({X, Y}))
     if (Clipper.Area(p) > 0) p.reverse()
     return p
@@ -144,7 +137,9 @@ class Packer {
         const a = Math.abs(Clipper.Area(s))
         return (b === null || a > b[0]) ? [a, s] : b
       }, null)[1], this.clipperTolerance)
-      return (path && path.length > 2) ? { id, path } : null
+      if (!path || path.length < 3) return
+      if (Clipper.Area(path) > 0) path.reverse()
+      return { id, path }
     }).filter((p) => p)
   }
 
@@ -161,7 +156,7 @@ class Packer {
       const rotated = rotate(part.path, ro * 2 * Math.PI / this.rotations)
 
       const angle = ro * 360 / this.rotations
-      return new Part(p.id, this.offset(rotated), ro, this.clipperScale, angle)
+      return new Placement(p.id, this.offset(rotated), ro, this.clipperScale, angle)
     })
   }
 
@@ -170,10 +165,10 @@ class Packer {
     return this.pack(this.render())
   }
 
-  async pack (placement, onProgress) {
-    const pairs = placement.map((b, i) => {
-      if (!this.NFPs.has(`${b}`)) { this.NFPs.set(`${b}`, this.getBinNFP(b)) }
-      return placement.slice(0, i).map((a) => [a, b])
+  async pack (placements, onProgress) {
+    const pairs = placements.map((b, i) => {
+      if (!this.NFPs.has(`${b}`)) { this.NFPs.set(`${b}`, this.getIFP(b)) }
+      return placements.slice(0, i).map((a) => [a, b])
     }).flat().filter((p) => !this.NFPs.has(p.join('|')))
 
     if (pairs.length) {
@@ -182,15 +177,15 @@ class Packer {
     }
 
     const bins = []
-    let bin, remaining = placement.slice()
+    let bin, remaining = placements.slice()
     while (remaining.length > 0) {
-      [bin, remaining] = this.getPlacement(remaining)
+      [bin, remaining] = this.findPlacements(remaining)
       bins.push(bin)
     }
     return { bins }
   }
 
-  combineNFP (part, placed, binNFP) {
+  combineNFP (placement, placed, IFP) {
     const { ctUnion, ctDifference } = ClipperLib.ClipType
     const cleanDist = 0.0001 * this.clipperScale
 
@@ -198,7 +193,7 @@ class Packer {
     const combined = new ClipperLib.Paths()
     const subtracted = new ClipperLib.Paths()
     const found = placed.map((p) => {
-      const nfp = this.NFPs.get([p, part].join('|'))
+      const nfp = this.NFPs.get([p, placement].join('|'))
       if (!nfp) return false
       const clean = Clipper.CleanPolygon(translate(nfp, p), cleanDist)
       if(clean.length > 2) {
@@ -209,8 +204,8 @@ class Packer {
     if (found.every((i) => !i)) return
     if (!union.Execute(ctUnion, combined, NonZero, NonZero)) return
 
+    diff.AddPath(IFP, ClipperLib.PolyType.ptSubject, true)
     diff.AddPaths(combined, ClipperLib.PolyType.ptClip, true)
-    diff.AddPath(binNFP, ClipperLib.PolyType.ptSubject, true)
     if(!diff.Execute(ctDifference, subtracted, NonZero, NonZero)) return
 
     const clean = Clipper.CleanPolygons(subtracted, cleanDist)
@@ -219,34 +214,27 @@ class Packer {
     return (fin.length > 0) ? fin[fin.length-1] : null
   }
 
-  getPlacement (placement) {
-    const bin = placement.reduce((placed, part) => {
-      const binNFP = this.NFPs.get(`${part}`)
+  findPlacements (placements) {
+    const bin = placements.reduce((placed, pl) => {
+      const IFP = this.NFPs.get(`${pl}`)
 
       if (placed.length === 0) {
-        return [binNFP.reduce((p, f) => {
-          const X = f.X - part.p0.X
-          if (p === null || X < p.X) {
-            return part.assign({ X, Y: f.Y - part.p0.Y })
-          }
-          return p
-        }, null)]
+        const pos = IFP.reduce((p, f) => (p === null || f.X < p.X) ? f : p, null)
+        return [pl.put(pos)]
       }
 
-      const combined = this.combineNFP(part, placed, binNFP)
+      const combined = this.combineNFP(pl, placed, IFP)
       if (!combined) return placed
 
       const placedpts = placed.map((c, i) => translate(c.path, c)).flat()
-      return [...placed, combined.reduce((o, f) => {
-        const X = f.X - part.p0.X, Y = f.Y - part.p0.Y
-        const w = weight([...placedpts, ...translate(part.path, {X, Y})])
-        if (o === null || w < o.w || (((w - o.w) < TOL) && (X < o.X))) {
-          return part.assign({ X, Y, w })
-        }
-        return o
-      }, null)]
+      const pos = combined.reduce((o, f) => {
+        const bd = bounds([...placedpts, ...translate(pl.path, f)])
+        f.w = bd.width * 2 + bd.height
+        return (o === null || f.w < o.w || f.X < o.X) ? f : o
+      }, null)
+      return [...placed, pl.put(pos)]
     }, [])
     const ids = bin.map((b) => b.id)
-    return [ bin, placement.filter((p) => !ids.includes(p.id)) ]
+    return [ bin, placements.filter((p) => !ids.includes(p.id)) ]
   }
 }

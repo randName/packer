@@ -217,26 +217,25 @@ class Packer {
       onProgress({ message, total: remaining.length })
       const bin = remaining.reduce((placed, pl, value) => {
         onProgress({ message, value })
-        // incorrect indentation for smaller diff
-      const IFP = this.NFPs.get(`${pl}`)
+        const IFP = this.NFPs.get(`${pl}`)
 
-      if (placed === null) {
-        const pos = IFP.reduce((p, f) => (p === null || f.X < p.X) ? f : p, null)
-        return [pl.put(pos)]
-      }
+        if (placed === null) {
+          const pos = IFP.reduce((p, f) => (p === null || f.X < p.X) ? f : p, null)
+          return [pl.put(pos)]
+        }
 
-      const combined = this.combineNFP(pl, placed, IFP)
-      if (!combined) return placed
+        const combined = this.combineNFP(pl, placed, IFP)
+        if (!combined) return placed
 
-      const placedpts = placed.map((c) => translate(c.path, c)).flat()
-      const pos = combined.reduce((o, f) => {
-        const bd = bounds([...placedpts, ...translate(pl.path, f)])
-        f.w = bd.width * 2 + bd.height
-        return (o === null || f.w < o.w || f.X < o.X) ? f : o
+        const placedpts = placed.map((c) => translate(c.path, c)).flat()
+        const pos = combined.reduce((o, f) => {
+          const bd = bounds([...placedpts, ...translate(pl.path, f)])
+          f.w = bd.width * 2 + bd.height
+          return (o === null || f.w < o.w || f.X < o.X) ? f : o
+        }, null)
+        return [...placed, pl.put(pos)]
       }, null)
-      return [...placed, pl.put(pos)]
-        // end of incorrect indentation
-      }, null)
+
       bins.push(bin)
       const ids = bin.map((b) => b.id)
       remaining = remaining.filter((p) => !ids.includes(p.id))

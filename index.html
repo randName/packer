@@ -15,7 +15,8 @@
   <div id="result"></div>
   <script type="module">
   import { Packer } from './packer.js'
-  import { Generator } from './polygonGenerator.js'
+  import { Generator } from './lib/polygonGenerator.js'
+  import { datGUIProgress } from './lib/dat.gui.progress.js'
 
   const NS = 'http://www.w3.org/2000/svg'
   const SVG = (polygons) => {
@@ -32,6 +33,7 @@
   const packer = new Packer()
   const generator = new Generator()
   const result = document.getElementById('result')
+  const progress = new datGUIProgress(gui.addFolder('progress'))
   const display = { el: document.getElementById('input'), svg: null }
 
   const configFolder = gui.addFolder('config')
@@ -56,6 +58,8 @@
 
   const showResult = (packed) => {
     if (!packed) return
+    progress.hide()
+    progress.remove()
     const clone = [...display.svg.childNodes].map((n) => n.cloneNode(false))
     result.innerHTML = ''
     packed.bins.forEach((bin) => {
@@ -75,7 +79,10 @@
 
   const menu = {
     sample: '',
-    nest: () => packer.start().then(showResult),
+    pack: () => {
+      progress.show()
+      packer.start((v) => progress.on(v)).then(showResult)
+    },
     generate: () => chooseParts(generator.generate())
   }
 
@@ -94,7 +101,7 @@
 
   gui.add(menu, 'generate')
   gui.add(menu, 'sample', Object.keys(testPacks)).onChange((v) => chooseParts(testPacks[v]))
-  gui.add(menu, 'nest')
+  gui.add(menu, 'pack')
 
   menu.generate()
   </script>

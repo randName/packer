@@ -1,3 +1,4 @@
+const doNothing = () => {}
 const TOL = Math.pow(10, -9)
 const Clipper = ClipperLib.Clipper
 const NonZero = ClipperLib.PolyFillType.pftNonZero
@@ -38,7 +39,16 @@ class Placement {
   }
 
   put (p) { return Object.assign(this, p) }
+
   toString () { return `${this.id}|${this.ro}` }
+
+  getIFP (bin) {
+    const x1 = -this.minX, x2 = bin.X - this.maxX
+    const y1 = -this.minY, y2 = bin.Y - this.maxY
+    const p = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]].map(([X, Y]) => ({X, Y}))
+    if (Clipper.Area(p) > 0) p.reverse()
+    return p
+  }
 }
 
 class Packer {
@@ -64,6 +74,7 @@ class Packer {
 
     this.parts = null
     this.NFPs = new Map()
+    this.running = false
   }
 
   get bin () { return this.toClipper([{x: this.width, y: this.height}])[0] }
@@ -84,25 +95,17 @@ class Packer {
     return np[0]
   }
 
-  getIFP (placement) {
-    const x1 = -placement.minX, x2 = this.bin.X - placement.maxX
-    const y1 = -placement.minY, y2 = this.bin.Y - placement.maxY
-    const p = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]].map(([X, Y]) => ({X, Y}))
-    if (Clipper.Area(p) > 0) p.reverse()
-    return p
-  }
-
   async generateNFPs (pairs, onProgress) {
-    if (onProgress) onProgress(0)
+    const total = pairs.length
+    const message = 'computing NFPs'
+    onProgress({ message, total })
 
     const pk = (p) => [p[0].id, p[0].ro, p[1].id, p[1].ro].join('|')
     const counter = new Uint32Array(new SharedArrayBuffer(4))
 
-    const size = pairs.length
-    const chunks = Math.min(navigator.hardwareConcurrency, size)
+    const chunks = Math.min(navigator.hardwareConcurrency, total)
+    const csize = Math.ceil(total / chunks)
     const workers = [...Array(chunks).keys()].map((i) => new Worker('worker.js'))
-
-    const csize = Math.ceil(size / chunks)
     const worked = (await Promise.all(workers.map((w, i) => {
       const j = i + 1
       const pc = pairs.slice(i * csize, j === chunks ? undefined : j * csize)
@@ -116,7 +119,7 @@ class Packer {
             w.terminate()
             resolve(results)
           }
-          if (onProgress) onProgress(Atomics.add(counter, 0, 1) / pairs.length)
+          onProgress({ message, value: Atomics.add(counter, 0, 1) })
           w.postMessage(pc[++n])
         }
         w.postMessage(pc[n])
@@ -125,6 +128,35 @@ class Packer {
     worked.forEach((p) => this.NFPs.set(pk(p.pair), p.nfp))
 
     return worked.length
+  }
+
+  combineNFP (placement, placed, IFP) {
+    const { ctUnion, ctDifference } = ClipperLib.ClipType
+    const cleanDist = 0.0001 * this.clipperScale
+
+    const diff = new Clipper(), union = new Clipper()
+    const combined = new ClipperLib.Paths()
+    const subtracted = new ClipperLib.Paths()
+    const found = placed.map((p) => {
+      const nfp = this.NFPs.get([p, placement].join('|'))
+      if (!nfp) return false
+      const clean = Clipper.CleanPolygon(translate(nfp, p), cleanDist)
+      if(clean.length > 2) {
+        union.AddPath(clean, ClipperLib.PolyType.ptSubject, true)
+      }
+      return true
+    })
+    if (found.every((i) => !i)) return
+    if (!union.Execute(ctUnion, combined, NonZero, NonZero)) return
+
+    diff.AddPath(IFP, ClipperLib.PolyType.ptSubject, true)
+    diff.AddPaths(combined, ClipperLib.PolyType.ptClip, true)
+    if(!diff.Execute(ctDifference, subtracted, NonZero, NonZero)) return
+
+    const clean = Clipper.CleanPolygons(subtracted, cleanDist)
+    if (!clean) return
+    const fin = clean.filter((p) => (p.length > 2))
+    return (fin.length > 0) ? fin[fin.length-1] : null
   }
 
   load (polygons) {
@@ -160,65 +192,35 @@ class Packer {
     })
   }
 
-  start () {
-    if(!this.parts) return Promise.resolve(null)
-    return this.pack(this.render())
+  async start (onProgress=doNothing) {
+    if (this.running || !this.parts) return
+    this.running = true
+    const result = await this.pack(this.render(), onProgress)
+    this.running = false
+    return result
   }
 
   async pack (placements, onProgress) {
     const pairs = placements.map((b, i) => {
-      if (!this.NFPs.has(`${b}`)) { this.NFPs.set(`${b}`, this.getIFP(b)) }
+      if (!this.NFPs.has(`${b}`)) { this.NFPs.set(`${b}`, b.getIFP(this.bin)) }
       return placements.slice(0, i).map((a) => [a, b])
     }).flat().filter((p) => !this.NFPs.has(p.join('|')))
 
     if (pairs.length) {
-      const nfps = await this.generateNFPs(pairs, onProgress)
-      console.log(`[packer] generated ${nfps} NFPs`)
+      await this.generateNFPs(pairs, onProgress)
     }
 
     const bins = []
-    let bin, remaining = placements.slice()
-    while (remaining.length > 0) {
-      [bin, remaining] = this.findPlacements(remaining)
-      bins.push(bin)
-    }
-    return { bins }
-  }
-
-  combineNFP (placement, placed, IFP) {
-    const { ctUnion, ctDifference } = ClipperLib.ClipType
-    const cleanDist = 0.0001 * this.clipperScale
-
-    const diff = new Clipper(), union = new Clipper()
-    const combined = new ClipperLib.Paths()
-    const subtracted = new ClipperLib.Paths()
-    const found = placed.map((p) => {
-      const nfp = this.NFPs.get([p, placement].join('|'))
-      if (!nfp) return false
-      const clean = Clipper.CleanPolygon(translate(nfp, p), cleanDist)
-      if(clean.length > 2) {
-        union.AddPath(clean, ClipperLib.PolyType.ptSubject, true)
-      }
-      return true
-    })
-    if (found.every((i) => !i)) return
-    if (!union.Execute(ctUnion, combined, NonZero, NonZero)) return
-
-    diff.AddPath(IFP, ClipperLib.PolyType.ptSubject, true)
-    diff.AddPaths(combined, ClipperLib.PolyType.ptClip, true)
-    if(!diff.Execute(ctDifference, subtracted, NonZero, NonZero)) return
-
-    const clean = Clipper.CleanPolygons(subtracted, cleanDist)
-    if (!clean) return
-    const fin = clean.filter((p) => (p.length > 2))
-    return (fin.length > 0) ? fin[fin.length-1] : null
-  }
-
-  findPlacements (placements) {
-    const bin = placements.reduce((placed, pl) => {
+    let remaining = placements.slice()
+    do {
+      const message = `placing (bin ${bins.length + 1})`
+      onProgress({ message, total: remaining.length })
+      const bin = remaining.reduce((placed, pl, value) => {
+        onProgress({ message, value })
+        // incorrect indentation for smaller diff
       const IFP = this.NFPs.get(`${pl}`)
 
-      if (placed.length === 0) {
+      if (placed === null) {
         const pos = IFP.reduce((p, f) => (p === null || f.X < p.X) ? f : p, null)
         return [pl.put(pos)]
       }
@@ -226,16 +228,20 @@ class Packer {
       const combined = this.combineNFP(pl, placed, IFP)
       if (!combined) return placed
 
-      const placedpts = placed.map((c, i) => translate(c.path, c)).flat()
+      const placedpts = placed.map((c) => translate(c.path, c)).flat()
       const pos = combined.reduce((o, f) => {
         const bd = bounds([...placedpts, ...translate(pl.path, f)])
         f.w = bd.width * 2 + bd.height
         return (o === null || f.w < o.w || f.X < o.X) ? f : o
       }, null)
       return [...placed, pl.put(pos)]
-    }, [])
-    const ids = bin.map((b) => b.id)
-    return [ bin, placements.filter((p) => !ids.includes(p.id)) ]
+        // end of incorrect indentation
+      }, null)
+      bins.push(bin)
+      const ids = bin.map((b) => b.id)
+      remaining = remaining.filter((p) => !ids.includes(p.id))
+    } while (remaining.length > 0)
+    return { bins }
   }
 }
 

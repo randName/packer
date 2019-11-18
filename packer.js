@@ -26,7 +26,7 @@ class Placement {
     const {X, Y} = path[0]
     this.origin = {X: -X, Y: -Y}
     this.path = translate(path, this.origin)
-    Object.assign(this, bounds(path))
+    Object.assign(this, bounds(this.path))
   }
 
   get x () { return ((this.X + this.origin.X) / this.scale) || 0 }
@@ -238,3 +238,5 @@ class Packer {
     return [ bin, placements.filter((p) => !ids.includes(p.id)) ]
   }
 }
+
+export { Packer }

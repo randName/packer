@@ -5,7 +5,6 @@
    <title>Packer</title>
    <script src="lib/dat.gui.min.js"></script>
    <script src="lib/clipper.js"></script>
-   <script src="packer.js"></script>
    <style>
     body { color: #ccc; background-color: #111; }
     svg * { fill: #666; stroke: #999; }
@@ -14,7 +13,10 @@
  <body>
   <div id="input"></div>
   <div id="result"></div>
-  <script>
+  <script type="module">
+  import { Packer } from './packer.js'
+  import { Generator } from './polygonGenerator.js'
+
   const NS = 'http://www.w3.org/2000/svg'
   const SVG = (polygons) => {
     const svg = document.createElementNS(NS, 'svg')
@@ -28,6 +30,7 @@
 
   const gui = new dat.GUI()
   const packer = new Packer()
+  const generator = new Generator()
   const result = document.getElementById('result')
   const display = { el: document.getElementById('input'), svg: null }
 
@@ -37,46 +40,18 @@
   configFolder.add(packer, 'spacing', 0, 10)
   configFolder.add(packer, 'rotations', 1, 8, 1)
 
-  const randFolder = gui.addFolder('random')
-
-  const center = (points) => {
-    const xs = points.map((p) => p.x), ys = points.map((p) => p.y)
-    const minx = Math.min(...xs), miny = Math.min(...ys)
-    const mx = (Math.max(...xs) - minx) * 0.5 + minx
-    const my = (Math.max(...ys) - miny) * 0.5 + miny
-    return points.map((p) => ({ x: p.x - mx, y: p.y - my }))
-  }
-
-  const randPoint = (s) => ({x: Math.random() * s, y: Math.random() * s})
-
-  const randShape = {
-    tri: (s) => [0,0,0].map(() => randPoint(s)),
-    rect: (s) => {
-      const {x, y} = randPoint(s)
-      return [[x, y], [0, y], [0, 0], [x, 0]].map(([x, y]) => ({x, y}))
-    }
-  }
-
-  const randMenu = { n: 20, min: 100, range: 50, shape: 'rect' }
-
-  randMenu.generate = () => {
-    const shape = randShape[randMenu.shape]
-    const range = [...Array(randMenu.n||20).keys()]
-    const scale = range.map(() => Math.random() * randMenu.range)
-    chooseParts(scale.map((s) => center(shape(s + randMenu.min))))
-  }
-
-  randFolder.add(randMenu, 'n', 3, 50, 1)
-  randFolder.add(randMenu, 'min', 10, 200)
-  randFolder.add(randMenu, 'range', 10, 100)
-  randFolder.add(randMenu, 'shape', Object.keys(randShape))
-  randFolder.add(randMenu, 'generate')
+  const genFolder = gui.addFolder('generator')
+  genFolder.add(generator, 'count', 3, 50, 1)
+  genFolder.add(generator, 'scaleMin', 10, 200)
+  genFolder.add(generator, 'scaleRange', 10, 100)
+  genFolder.add(generator, 'shape', generator.shapes)
 
   const chooseParts = (parts) => {
     packer.load(parts)
     display.svg = SVG(parts)
     display.el.innerHTML = ''
     display.el.appendChild(display.svg)
+    result.innerHTML = ''
   }
 
   const showResult = (packed) => {
@@ -101,6 +76,7 @@
   const menu = {
     sample: '',
     nest: () => packer.start().then(showResult),
+    generate: () => chooseParts(generator.generate())
   }
 
   const testPacks = {
@@ -116,10 +92,11 @@
     ],
   }
 
+  gui.add(menu, 'generate')
   gui.add(menu, 'sample', Object.keys(testPacks)).onChange((v) => chooseParts(testPacks[v]))
   gui.add(menu, 'nest')
 
-  randMenu.generate()
+  menu.generate()
   </script>
  </body>
 </html>

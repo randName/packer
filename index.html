@@ -14,7 +14,7 @@
   <div id="input"></div>
   <div id="result"></div>
   <script type="module">
-  import { Packer } from './packer.js'
+  import { Packer } from './src/packer.js'
   import { Generator } from './lib/polygonGenerator.js'
   import { datGUIProgress } from './lib/dat.gui.progress.js'
 
@@ -49,7 +49,7 @@
   genFolder.add(generator, 'shape', generator.shapes)
 
   const chooseParts = (parts) => {
-    packer.load(parts)
+    packer.load(parts.map((polygon, id) => ({ id, polygon })))
     display.svg = SVG(parts)
     display.el.innerHTML = ''
     display.el.appendChild(display.svg)
@@ -57,9 +57,9 @@
   }
 
   const showResult = (packed) => {
-    if (!packed) return
     progress.hide()
     progress.remove()
+    if (!packed) return
     const clone = [...display.svg.childNodes].map((n) => n.cloneNode(false))
     result.innerHTML = ''
     packed.bins.forEach((bin) => {
@@ -69,7 +69,7 @@
       ns.setAttribute('viewBox', `0 0 ${packer.width} ${packer.height}`)
       bin.forEach((p) => {
         const g = document.createElementNS(NS, 'g')
-        g.setAttribute('transform', p.transform)
+        g.setAttribute('transform', `translate(${p.x} ${p.y}) rotate(${p.angle})`)
         g.appendChild(clone[p.id])
         ns.appendChild(g)
       })

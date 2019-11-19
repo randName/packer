@@ -9,9 +9,10 @@ self.onmessage = (e) => {
     self.postMessage(null)
     return
   }
-  const [A, B] = pair, B0 = B.path[0]
-  const F = B.path.map((b) => ({X: -b.X, Y: -b.Y}))
-  const nfp = ClipperLib.Clipper.MinkowskiSum(A.path, F, true)
-    .reduce(area, null)[0].map((c) => ({X: c.X + B0.X, Y: c.Y + B0.Y}))
-  self.postMessage({ pair, nfp })
+  const { A, B, key } = pair
+  const bX = B[0].X, bY = B[0].Y
+  const flipped = B.map((b) => ({ X: -b.X, Y: -b.Y }))
+  const nfp = ClipperLib.Clipper.MinkowskiSum(A, flipped, true)
+    .reduce(area, null)[0].map((c) => ({ X: c.X + bX, Y: c.Y + bY }))
+  self.postMessage({ key, nfp })
 }

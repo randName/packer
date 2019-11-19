@@ -1,57 +1,12 @@
+import { Part } from './part.js'
+import { Path } from './geometry.js'
+
 const doNothing = () => {}
-const TOL = Math.pow(10, -9)
 const Clipper = ClipperLib.Clipper
 const NonZero = ClipperLib.PolyFillType.pftNonZero
 
-const translate = (poly, v) => poly.map((p) => ({X: p.X + v.X, Y: p.Y + v.Y}))
-
-const rotate = (poly, angle) => {
-  const s = Math.sin(angle), c = Math.cos(angle)
-  return poly.map((p) => ({ X: p.X * c - p.Y * s, Y: p.X * s + p.Y * c }))
-}
-
-const bounds = (points) => {
-  const xs = points.map((p) => p.X), ys = points.map((p) => p.Y)
-  const minX = Math.min(...xs), maxX = Math.max(...xs)
-  const minY = Math.min(...ys), maxY = Math.max(...ys)
-  return { width: maxX - minX, height: maxY - minY, minX, maxX, minY, maxY }
-}
-
-class Placement {
-  constructor (id, path, ro, scale, angle) {
-    this.id = id
-    this.ro = ro
-    this.scale = scale
-    this.angle = angle || 0
-
-    const {X, Y} = path[0]
-    this.origin = {X: -X, Y: -Y}
-    this.path = translate(path, this.origin)
-    Object.assign(this, bounds(this.path))
-  }
-
-  get x () { return ((this.X + this.origin.X) / this.scale) || 0 }
-
-  get y () { return ((this.Y + this.origin.Y) / this.scale) || 0 }
-
-  get transform () {
-    return `translate(${this.x} ${this.y}) rotate(${this.angle})`
-  }
-
-  put (p) { return Object.assign(this, p) }
-
-  toString () { return `${this.id}|${this.ro}` }
-
-  getIFP (bin) {
-    const x1 = -this.minX, x2 = bin.X - this.maxX
-    const y1 = -this.minY, y2 = bin.Y - this.maxY
-    const p = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]].map(([X, Y]) => ({X, Y}))
-    if (Clipper.Area(p) > 0) p.reverse()
-    return p
-  }
-}
-
 class Packer {
+
   constructor () {
     // bin dimensions
     this.width = 500
@@ -72,14 +27,27 @@ class Packer {
     // scale for Clipper
     this.clipperScale = 10000
 
-    this.parts = null
+    this.counts = new Map()
+    this.parts = new Map()
     this.NFPs = new Map()
     this.running = false
   }
 
-  get bin () { return this.toClipper([{x: this.width, y: this.height}])[0] }
+  get bin () {
+    return this.toClipper([{x: this.width, y: this.height}])[0]
+  }
 
-  get clipperTolerance () { return this.tolerance * this.clipperScale }
+  get areaScale () {
+    return this.clipperScale * this.clipperScale
+  }
+
+  get clipperTolerance () {
+    return this.tolerance * this.clipperScale
+  }
+
+  clearCache () {
+    this.NFPs.clear()
+  }
 
   toClipper (polygon) {
     const cS = this.clipperScale
@@ -92,7 +60,7 @@ class Packer {
     const co = new ClipperLib.ClipperOffset(2, this.clipperTolerance)
     co.AddPath(path, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon)
     co.Execute(np, 0.5 * this.spacing * this.clipperScale)
-    return np[0]
+    return new Path(...np[0])
   }
 
   async generateNFPs (pairs, onProgress) {
@@ -100,16 +68,18 @@ class Packer {
     const message = 'computing NFPs'
     onProgress({ message, total })
 
-    const pk = (p) => [p[0].id, p[0].ro, p[1].id, p[1].ro].join('|')
-    const counter = new Uint32Array(new SharedArrayBuffer(4))
+    pairs = pairs.map((p) => ({ A: p[0].path, B: p[1].path, key: p.join('|') }))
 
     const chunks = Math.min(navigator.hardwareConcurrency, total)
     const csize = Math.ceil(total / chunks)
-    const workers = [...Array(chunks).keys()].map((i) => new Worker('worker.js'))
-    const worked = (await Promise.all(workers.map((w, i) => {
+
+    const counter = new Uint32Array(new SharedArrayBuffer(4))
+    const worked = (await Promise.all(Array.from({ length: chunks }, (_, i) => {
       const j = i + 1
       const pc = pairs.slice(i * csize, j === chunks ? undefined : j * csize)
       const ps = pc.length
+
+      const w = new Worker('worker.js')
       return new Promise((resolve, reject) => {
         let n = 0, results = []
         w.onerror = (e) => console.error(e)
@@ -125,8 +95,8 @@ class Packer {
         w.postMessage(pc[n])
       })
     }))).flat().filter((p) => p && p.nfp)
-    worked.forEach((p) => this.NFPs.set(pk(p.pair), p.nfp))
 
+    worked.forEach((p) => this.NFPs.set(p.key, new Path(...p.nfp)))
     return worked.length
   }
 
@@ -140,7 +110,7 @@ class Packer {
     const found = placed.map((p) => {
       const nfp = this.NFPs.get([p, placement].join('|'))
       if (!nfp) return false
-      const clean = Clipper.CleanPolygon(translate(nfp, p), cleanDist)
+      const clean = Clipper.CleanPolygon(nfp.translate(p), cleanDist)
       if(clean.length > 2) {
         union.AddPath(clean, ClipperLib.PolyType.ptSubject, true)
       }
@@ -159,10 +129,13 @@ class Packer {
     return (fin.length > 0) ? fin[fin.length-1] : null
   }
 
-  load (polygons) {
-    this.NFPs.clear()
-    this.parts = polygons.map((poly, id) => {
-      const simple = Clipper.SimplifyPolygon(this.toClipper(poly), NonZero)
+  load (parts) {
+    this.clearCache()
+    this.parts.clear()
+    this.counts.clear()
+    parts.forEach((part) => {
+      const poly = this.toClipper(part.polygon)
+      const simple = Clipper.SimplifyPolygon(poly, NonZero)
       if(!simple || simple.length === 0) return
 
       const path = Clipper.CleanPolygon(simple.reduce((b, s) => {
@@ -170,25 +143,30 @@ class Packer {
         return (b === null || a > b[0]) ? [a, s] : b
       }, null)[1], this.clipperTolerance)
       if (!path || path.length < 3) return
-      if (Clipper.Area(path) > 0) path.reverse()
-      return { id, path }
-    }).filter((p) => p)
+
+      const area = Clipper.Area(path)
+      if (area > 0) path.reverse()
+
+      this.counts.set(part.id, part.count || 1)
+      const scaled = Math.abs(area / this.areaScale)
+      this.parts.set(part.id, new Part(part.id, path, scaled))
+    })
   }
 
   render (prefab) {
     if (!prefab) {
-      const fz = () => ((Math.random() * 1 - this.fuzzmin) + this.fuzzmin)
-      prefab = this.parts.map(({ id, path }) => ({
-        id, a: Math.abs(Clipper.Area(path)) * fz()
-      })).sort((a, b) => b.a - a.a)
+      const z = (a) => a * ((Math.random() * 1 - this.fuzzmin) + this.fuzzmin)
+      prefab = Array.from(this.counts, ([id, length]) => {
+        const area = this.parts.get(id).area
+        return Array.from({ length }, () => ({ id, a: z(area) }))
+      }).flat()
+      prefab.sort((a, b) => b.a - a.a)
     }
     return prefab.map((p) => {
-      const part = this.parts.find((q) => p.id === q.id)
-      const ro = p.ro || Math.floor(Math.random() * this.rotations)
-      const rotated = rotate(part.path, ro * 2 * Math.PI / this.rotations)
-
-      const angle = ro * 360 / this.rotations
-      return new Placement(p.id, this.offset(rotated), ro, this.clipperScale, angle)
+      const part = this.parts.get(p.id)
+      const rot = part.getRotation(p, this.rotations)
+      const path = this.offset(rot.path).transform(...rot.transform)
+      return part.render({ ...rot, part, path })
     })
   }
 
@@ -227,18 +205,19 @@ class Packer {
         const combined = this.combineNFP(pl, placed, IFP)
         if (!combined) return placed
 
-        const placedpts = placed.map((c) => translate(c.path, c)).flat()
+        const placedBounds = placed.map((c) => c.path.bounds.translate(c))
+        const bound = (new Path(...placedBounds.flat())).bounds
+
         const pos = combined.reduce((o, f) => {
-          const bd = bounds([...placedpts, ...translate(pl.path, f)])
+          const bd = bound.union(pl.path.bounds.translate(f))
           f.w = bd.width * 2 + bd.height
           return (o === null || f.w < o.w || f.X < o.X) ? f : o
         }, null)
         return [...placed, pl.put(pos)]
       }, null)
 
-      bins.push(bin)
-      const ids = bin.map((b) => b.id)
-      remaining = remaining.filter((p) => !ids.includes(p.id))
+      bins.push(bin.map((p) => p.place(this.clipperScale)))
+      remaining = remaining.filter((p) => !p.placed)
     } while (remaining.length > 0)
     return { bins }
   }

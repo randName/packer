@@ -68,8 +68,7 @@
   }
 
   const showResult = (packed) => {
-    progress.hide()
-    progress.remove()
+    menu.reset()
     if (!packed) return
     const nodes = [...display.svg.childNodes]
     result.innerHTML = ''
@@ -88,15 +87,24 @@
 
   const menu = {
     sample: '',
+    reset: () => {
+      progress.clear()
+      packButton.name('start pack')
+    },
     pack: () => {
+      if (packer.running) {
+        packer.stop()
+        return menu.reset()
+      }
       progress.show()
+      packButton.name('stop pack')
       packer.start((v) => progress.on(v)).then(showResult)
     },
     generate: () => chooseParts(generator.generate().map((polygon) => ({ polygon })))
   }
 
   genFolder.add(menu, 'generate')
-  gui.add(menu, 'pack')
+  const packButton = gui.add(menu, 'pack')
 
   menu.generate()
   </script>

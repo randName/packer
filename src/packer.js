@@ -31,6 +31,7 @@ class Packer {
     this.parts = new Map()
     this.NFPs = new Map()
     this.running = false
+    this.stopped = false
   }
 
   get bin () {
@@ -85,7 +86,7 @@ class Packer {
         w.onerror = (e) => console.error(e)
         w.onmessage = (e) => {
           results.push(e.data)
-          if (results.length === ps) {
+          if (this.stopped || results.length === ps) {
             w.terminate()
             resolve(results)
           }
@@ -97,6 +98,7 @@ class Packer {
     }))).flat().filter((p) => p && p.nfp)
 
     worked.forEach((p) => this.NFPs.set(p.key, new Path(...p.nfp)))
+    onProgress({ message, remove: true })
     return worked.length
   }
 
@@ -173,12 +175,17 @@ class Packer {
   async start (onProgress=doNothing) {
     if (this.running || !this.parts) return
     this.running = true
-    const result = await this.pack(this.render(), onProgress)
+    const result = await this.findPlacements(this.render(), onProgress)
     this.running = false
+    this.stopped = false
     return result
   }
 
-  async pack (placements, onProgress) {
+  stop () {
+    this.stopped = true
+  }
+
+  async findPlacements (placements, onProgress) {
     const pairs = placements.map((b, i) => {
       if (!this.NFPs.has(`${b}`)) { this.NFPs.set(`${b}`, b.getIFP(this.bin)) }
       return placements.slice(0, i).map((a) => [a, b])
@@ -187,6 +194,8 @@ class Packer {
     if (pairs.length) {
       await this.generateNFPs(pairs, onProgress)
     }
+
+    if (this.stopped) return
 
     const bins = []
     let remaining = placements.slice()
@@ -218,6 +227,7 @@ class Packer {
 
       bins.push(bin.map((p) => p.place(this.clipperScale)))
       remaining = remaining.filter((p) => !p.placed)
+      onProgress({ message, remove: true })
     } while (remaining.length > 0)
     return { bins }
   }

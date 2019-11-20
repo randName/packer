@@ -10,6 +10,7 @@
     svg * { fill: #666; stroke: #999; }
     #input { height: 300px; }
     #input > svg { height: 100%; }
+    #canvas { border: solid 2px #999; }
     #result { display: flex; flex-flow: row wrap; }
     #result > svg { height: 200px; margin: 1px; border: solid 1px #666; }
    </style>
@@ -19,6 +20,7 @@
   <div id="result"></div>
   <script type="module">
   import { Packer } from './src/packer.js'
+  import { Canvas } from './lib/polygonCanvas.js'
   import { Generator } from './lib/polygonGenerator.js'
   import { datGUIProgress } from './lib/dat.gui.progress.js'
 
@@ -43,9 +45,33 @@
   const gui = new dat.GUI()
   const packer = new Packer()
   const generator = new Generator()
+  const canvas = new Canvas('canvas', packer)
   const result = document.getElementById('result')
   const progress = new datGUIProgress(gui.addFolder('progress'))
   const display = { el: document.getElementById('input'), svg: null }
+
+  const draw = {
+    count: 1,
+    parts: [],
+    'new': () => {
+      canvas.reset()
+      draw.parts = []
+      result.innerHTML = ''
+      display.el.innerHTML = ''
+      display.el.appendChild(canvas.el)
+    },
+    addPath: () => {
+      const polygon = canvas.end()
+      if (polygon.length > 2) {
+        draw.parts.push({ count: draw.count, polygon })
+      }
+    },
+    end: () => {
+      draw.addPath()
+      chooseParts(draw.parts)
+      canvas.reset()
+    },
+  }
 
   const configFolder = gui.addFolder('config')
   configFolder.add(packer, 'width', 0, 600)
@@ -58,6 +84,12 @@
   genFolder.add(generator, 'scaleMin', 10, 200)
   genFolder.add(generator, 'scaleRange', 10, 100)
   genFolder.add(generator, 'shape', generator.shapes)
+
+  const drawFolder = gui.addFolder('draw')
+  drawFolder.add(draw, 'new')
+  drawFolder.add(draw, 'count', 0, 10, 1)
+  drawFolder.add(draw, 'addPath')
+  drawFolder.add(draw, 'end')
 
   const chooseParts = (parts) => {
     packer.load(parts.map((p, id) => ({ id, ...p })))

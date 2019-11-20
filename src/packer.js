@@ -12,6 +12,9 @@ class Packer {
     this.width = 500
     this.height = 350
 
+    // fill single bin (for single-part packs)
+    this.single = false
+
     // space between parts
     this.spacing = 5.5
 
@@ -55,6 +58,10 @@ class Packer {
     return polygon.map((p) => ({X: p.x * cS, Y: p.y * cS}))
   }
 
+  floodCount (area) {
+    return Math.floor(this.width * this.height / area)
+  }
+
   offset (path) {
     if (this.spacing < 0.001) return path
     const np = new ClipperLib.Paths()
@@ -68,8 +75,6 @@ class Packer {
     const total = pairs.length
     const message = 'computing NFPs'
     onProgress({ message, total })
-
-    pairs = pairs.map((p) => ({ A: p[0].path, B: p[1].path, key: p.join('|') }))
 
     const chunks = Math.min(navigator.hardwareConcurrency, total)
     const csize = Math.ceil(total / chunks)
@@ -135,6 +140,12 @@ class Packer {
     this.clearCache()
     this.parts.clear()
     this.counts.clear()
+
+    if (parts.length === 1 && !parts[0].count) {
+      // single-part pack if no count specified
+      this.single = true
+    }
+
     parts.forEach((part) => {
       const poly = this.toClipper(part.polygon)
       const simple = Clipper.SimplifyPolygon(poly, NonZero)
@@ -149,8 +160,10 @@ class Packer {
       const area = Clipper.Area(path)
       if (area > 0) path.reverse()
 
-      this.counts.set(part.id, part.count || 1)
       const scaled = Math.abs(area / this.areaScale)
+      const count = this.single ? this.floodCount(scaled) : (part.count || 1)
+
+      this.counts.set(part.id, count)
       this.parts.set(part.id, new Part(part.id, path, scaled))
     })
   }
@@ -186,12 +199,18 @@ class Packer {
   }
 
   async findPlacements (placements, onProgress) {
-    const pairs = placements.map((b, i) => {
+    const gen = new Map()
+    placements.forEach((b, i) => {
       if (!this.NFPs.has(`${b}`)) { this.NFPs.set(`${b}`, b.getIFP(this.bin)) }
-      return placements.slice(0, i).map((a) => [a, b])
-    }).flat().filter((p) => !this.NFPs.has(p.join('|')))
+      placements.slice(0, i).forEach((a) => {
+        const key = [a, b].join('|')
+        if (this.NFPs.has(key) || gen.has(key)) return
+        gen.set(key, { A: a.path, B: b.path })
+      })
+    })
 
-    if (pairs.length) {
+    if (gen.size > 0) {
+      const pairs = Array.from(gen, ([key, p]) => ({ key, ...p }))
       await this.generateNFPs(pairs, onProgress)
     }
 
@@ -228,8 +247,8 @@ class Packer {
       bins.push(bin.map((p) => p.place(this.clipperScale)))
       remaining = remaining.filter((p) => !p.placed)
       onProgress({ message, remove: true })
-    } while (remaining.length > 0)
-    return { bins }
+    } while (!this.single && remaining.length > 0)
+    return { bins, placements }
   }
 }
 

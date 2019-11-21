@@ -19,7 +19,7 @@
   <div id="input"></div>
   <div id="result"></div>
   <script type="module">
-  import { Packer } from './src/packer.js'
+  import { Packer } from './src/index.js'
   import { Canvas } from './lib/polygonCanvas.js'
   import { Generator } from './lib/polygonGenerator.js'
   import { datGUIProgress } from './lib/dat.gui.progress.js'
@@ -100,8 +100,8 @@
   }
 
   const showResult = (packed) => {
-    menu.reset()
     if (!packed) return
+    if (!packed.bins) return progress.on(packed)
     const nodes = [...display.svg.childNodes]
     result.innerHTML = ''
     packed.bins.forEach((bin) => {
@@ -130,7 +130,7 @@
       }
       progress.show()
       packButton.name('stop pack')
-      packer.start((v) => progress.on(v)).then(showResult)
+      packer.start(showResult).then(showResult).then(() => menu.reset())
     },
     generate: () => chooseParts(generator.generate().map((polygon) => ({ polygon })))
   }

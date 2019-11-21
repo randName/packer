@@ -4,6 +4,7 @@ import { Path } from './geometry.js'
 const doNothing = () => {}
 const Clipper = ClipperLib.Clipper
 const NonZero = ClipperLib.PolyFillType.pftNonZero
+const getWorker = () => new Worker('src/worker.js')
 
 class Packer {
 
@@ -71,7 +72,20 @@ class Packer {
     return new Path(...np[0])
   }
 
-  async generateNFPs (pairs, onProgress) {
+  async generateNFPs (placements, onProgress) {
+    const gen = new Map()
+    placements.forEach((b, i) => {
+      if (!this.NFPs.has(`${b}`)) { this.NFPs.set(`${b}`, b.getIFP(this.bin)) }
+      placements.slice(0, i).forEach((a) => {
+        const key = [a, b].join('|')
+        if (this.NFPs.has(key) || gen.has(key)) return
+        gen.set(key, { A: a.path, B: b.path })
+      })
+    })
+
+    if (gen.size === 0) return 0
+
+    const pairs = Array.from(gen, ([key, p]) => ({ key, ...p }))
     const total = pairs.length
     const message = 'computing NFPs'
     onProgress({ message, total })
@@ -84,8 +98,9 @@ class Packer {
       const j = i + 1
       const pc = pairs.slice(i * csize, j === chunks ? undefined : j * csize)
       const ps = pc.length
+      if (ps === 0) return Promise.resolve([])
 
-      const w = new Worker('worker.js')
+      const w = getWorker()
       return new Promise((resolve, reject) => {
         let n = 0, results = []
         w.onerror = (e) => console.error(e)
@@ -107,29 +122,18 @@ class Packer {
     return worked.length
   }
 
-  combineNFP (placement, placed, IFP) {
-    const { ctUnion, ctDifference } = ClipperLib.ClipType
+  async combineNFP (placement, placed, combine) {
     const cleanDist = 0.0001 * this.clipperScale
 
-    const diff = new Clipper(), union = new Clipper()
-    const combined = new ClipperLib.Paths()
-    const subtracted = new ClipperLib.Paths()
     const found = placed.map((p) => {
       const nfp = this.NFPs.get([p, placement].join('|'))
       if (!nfp) return false
       const clean = Clipper.CleanPolygon(nfp.translate(p), cleanDist)
-      if(clean.length > 2) {
-        union.AddPath(clean, ClipperLib.PolyType.ptSubject, true)
-      }
-      return true
-    })
-    if (found.every((i) => !i)) return
-    if (!union.Execute(ctUnion, combined, NonZero, NonZero)) return
+      return clean
+    }).filter((p) => (p && p.length > 2))
+    if (found.length < 1) return
 
-    diff.AddPath(IFP, ClipperLib.PolyType.ptSubject, true)
-    diff.AddPaths(combined, ClipperLib.PolyType.ptClip, true)
-    if(!diff.Execute(ctDifference, subtracted, NonZero, NonZero)) return
-
+    const subtracted = await combine(found)
     const clean = Clipper.CleanPolygons(subtracted, cleanDist)
     if (!clean) return
     const fin = clean.filter((p) => (p.length > 2))
@@ -185,43 +189,22 @@ class Packer {
     })
   }
 
-  async start (onProgress=doNothing) {
-    if (this.running || !this.parts) return
-    this.running = true
-    const result = await this.findPlacements(this.render(), onProgress)
-    this.running = false
-    this.stopped = false
-    return result
-  }
-
-  stop () {
-    this.stopped = true
-  }
-
   async findPlacements (placements, onProgress) {
-    const gen = new Map()
-    placements.forEach((b, i) => {
-      if (!this.NFPs.has(`${b}`)) { this.NFPs.set(`${b}`, b.getIFP(this.bin)) }
-      placements.slice(0, i).forEach((a) => {
-        const key = [a, b].join('|')
-        if (this.NFPs.has(key) || gen.has(key)) return
-        gen.set(key, { A: a.path, B: b.path })
-      })
+    const worker = getWorker()
+    const combine = (IFP) => (NFPs) => new Promise((resolve, reject) => {
+      worker.onerror = reject
+      worker.onmessage = (e) => resolve(e.data)
+      worker.postMessage({ NFPs, IFP })
     })
-
-    if (gen.size > 0) {
-      const pairs = Array.from(gen, ([key, p]) => ({ key, ...p }))
-      await this.generateNFPs(pairs, onProgress)
-    }
-
-    if (this.stopped) return
 
     const bins = []
     let remaining = placements.slice()
     do {
       const message = `placing (bin ${bins.length + 1})`
       onProgress({ message, total: remaining.length })
-      const bin = remaining.reduce((placed, pl, value) => {
+      const bin = await remaining.reduce(async (promisedPlace, pl, value) => {
+        const placed = await promisedPlace
+        if (this.stopped) return placed
         onProgress({ message, value })
         const IFP = this.NFPs.get(`${pl}`)
 
@@ -230,7 +213,7 @@ class Packer {
           return [pl.put(pos)]
         }
 
-        const combined = this.combineNFP(pl, placed, IFP)
+        const combined = await this.combineNFP(pl, placed, combine(IFP))
         if (!combined) return placed
 
         const placedBounds = placed.map((c) => c.path.bounds.translate(c))
@@ -248,7 +231,29 @@ class Packer {
       remaining = remaining.filter((p) => !p.placed)
       onProgress({ message, remove: true })
     } while (!this.single && remaining.length > 0)
+
+    worker.terminate()
     return { bins, placements }
+  }
+
+  async pack (onProgress) {
+    const placements = this.render()
+    await this.generateNFPs(placements, onProgress)
+    if (this.stopped) return null
+    return (await this.findPlacements(placements, onProgress))
+  }
+
+  async start (onProgress=doNothing) {
+    if (this.running || !this.parts) return
+    this.running = true
+    const result = await this.pack(onProgress)
+    this.running = false
+    this.stopped = false
+    return result
+  }
+
+  stop () {
+    this.stopped = true
   }
 }
 

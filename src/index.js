@@ -2,6 +2,12 @@ import { BasePacker } from './base.js'
 
 class Packer extends BasePacker {
 
+  constructor () {
+    super()
+
+    this.fuzzmin = 0.8
+  }
+
   placementHeuristic (current, placed) {
     return current.bounds.width + current.bounds.height
   }
@@ -29,4 +35,6 @@ class Packer extends BasePacker {
   }
 }
 
-export { Packer }
+export {
+  Packer,
+}

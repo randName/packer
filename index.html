@@ -20,6 +20,7 @@
   <div id="result"></div>
   <script type="module">
   import { Packer } from './src/index.js'
+
   import { Canvas } from './lib/polygonCanvas.js'
   import { Generator } from './lib/polygonGenerator.js'
   import { datGUIProgress } from './lib/dat.gui.progress.js'
@@ -29,11 +30,12 @@
     return ['min', 'max'].map((f) => ({ x: Math[f](...xs), y: Math[f](...ys) }))
   }
 
-  const NS = 'http://www.w3.org/2000/svg'
+  const createElement = (e) => document.createElementNS('http://www.w3.org/2000/svg', e)
+
   const SVG = (polygons) => {
-    const svg = document.createElementNS(NS, 'svg')
+    const svg = createElement('svg')
     const [min, max] = bounds(polygons.map((points) => {
-      const n = document.createElementNS(NS, 'polygon')
+      const n = createElement('polygon')
       n.setAttribute('points', points.map((p) => `${p.x},${p.y}`).join(' '))
       svg.appendChild(n)
       return bounds(points)
@@ -106,9 +108,15 @@
     result.innerHTML = ''
     packed.bins.forEach((bin) => {
       const ns = display.svg.cloneNode(false)
+      const t = createElement('title')
+      t.textContent = bin.text || ''
+      ns.appendChild(t)
       ns.setAttribute('viewBox', `0 0 ${packer.width} ${packer.height}`)
       bin.forEach((p) => {
-        const g = document.createElementNS(NS, 'g')
+        const g = createElement('g')
+        const t = createElement('title')
+        t.textContent = p.text || ''
+        g.appendChild(t)
         g.setAttribute('transform', `translate(${p.x} ${p.y}) rotate(${p.angle})`)
         g.appendChild(nodes[p.id].cloneNode(false))
         ns.appendChild(g)

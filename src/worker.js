@@ -20,6 +20,8 @@ const combineNFP = ({ NFPs, IFP }) => {
   NFPs.forEach((p) => union.AddPath(p, ptSubject, true))
   if (!union.Execute(ctUnion, combined, NonZero, NonZero)) return
 
+  if (!IFP) return combined
+
   const diff = new ClipperLib.Clipper(),result = new ClipperLib.Paths()
   diff.AddPaths(combined, ptClip, true)
   diff.AddPath(IFP, ptSubject, true)

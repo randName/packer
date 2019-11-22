@@ -4,7 +4,6 @@ import { Path } from './geometry.js'
 const doNothing = () => {}
 const Clipper = ClipperLib.Clipper
 const NonZero = ClipperLib.PolyFillType.pftNonZero
-const getWorker = () => new Worker('src/worker.js')
 
 class BasePacker {
 
@@ -14,13 +13,10 @@ class BasePacker {
     this.height = 350
 
     // space between parts
-    this.spacing = 5.5
+    this.spacing = 10.5
 
     // maximum number of rotations to consider
-    this.rotations = 4
-
-    // minimum fuzz multiplier for polygon area
-    this.fuzzmin = 0.8
+    this.rotations = 3
 
     // max error allowed when rasterizing curves
     this.tolerance = 0.3
@@ -32,10 +28,16 @@ class BasePacker {
     this.NFPs = new Map()
     this.running = false
     this.stopped = false
+
+    this.clearCache()
   }
 
   get bin () {
     return this.toClipper([{x: this.width, y: this.height}])[0]
+  }
+
+  get binArea () {
+    return this.width * this.height
   }
 
   get areaScale () {
@@ -49,6 +51,10 @@ class BasePacker {
   toClipper (polygon) {
     const cS = this.clipperScale
     return polygon.map((p) => ({X: p.x * cS, Y: p.y * cS}))
+  }
+
+  getWorker () {
+    return new Worker('src/worker.js')
   }
 
   offset (path) {
@@ -88,7 +94,7 @@ class BasePacker {
       const ps = pc.length
       if (ps === 0) return Promise.resolve([])
 
-      const w = getWorker()
+      const w = this.getWorker()
       return new Promise((resolve, reject) => {
         let n = 0, results = []
         w.onerror = (e) => console.error(e)
@@ -140,7 +146,7 @@ class BasePacker {
   // may be overriden by subclasses
 
   createPrefab () {
-    return Array.from(this.parts, ([id, p]) => ({ id }))
+    return Array.from(this.parts.keys(), (id) => ({ id }))
   }
 
   createPart (part) {
@@ -162,7 +168,7 @@ class BasePacker {
   }
 
   async findPlacements (placements, onProgress) {
-    const worker = getWorker()
+    const worker = this.getWorker()
     const combine = (IFP) => (NFPs) => new Promise((resolve, reject) => {
       worker.onerror = reject
       worker.onmessage = (e) => resolve(e.data)
@@ -243,7 +249,7 @@ class BasePacker {
   }
 
   async start (onProgress=doNothing) {
-    if (this.running || !this.parts) return
+    if (this.running || this.parts.size === 0) return
     this.running = true
     const result = await this.pack(onProgress)
     this.running = false
@@ -256,4 +262,4 @@ class BasePacker {
   }
 }
 
-export { BasePacker, Part }
+export { BasePacker, Part, Path }

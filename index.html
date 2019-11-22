@@ -63,9 +63,9 @@
       display.el.appendChild(canvas.el)
     },
     addPath: () => {
-      const polygon = canvas.end()
-      if (polygon.length > 2) {
-        draw.parts.push({ count: draw.count, polygon })
+      const path = canvas.end()
+      if (path.length > 2) {
+        draw.parts.push({ count: draw.count, path })
       }
     },
     end: () => {
@@ -78,7 +78,7 @@
   const configFolder = gui.addFolder('config')
   configFolder.add(packer, 'width', 0, 600)
   configFolder.add(packer, 'height', 0, 600)
-  configFolder.add(packer, 'spacing', 0, 10)
+  configFolder.add(packer, 'spacing', 0, 20)
   configFolder.add(packer, 'rotations', 1, 8, 1)
 
   const genFolder = gui.addFolder('generator')
@@ -95,16 +95,23 @@
 
   const chooseParts = (parts) => {
     packer.load(parts.map((p, id) => ({ id, ...p })))
-    display.svg = SVG(parts.map(({ polygon }) => polygon))
+    display.svg = SVG(parts.map(({ path }) => path))
+    display.nodes = [...display.svg.childNodes]
     display.el.innerHTML = ''
     display.el.appendChild(display.svg)
     result.innerHTML = ''
   }
 
+  const getPart = (id) => {
+    const el = display.nodes[id].cloneNode(false)
+    const part = packer.parts.get(id), { x, y } = part.origin
+    el.setAttribute('transform', `translate(${-x} ${-y})`)
+    return el
+  }
+
   const showResult = (packed) => {
     if (!packed) return
     if (!packed.bins) return progress.on(packed)
-    const nodes = [...display.svg.childNodes]
     result.innerHTML = ''
     packed.bins.forEach((bin) => {
       const ns = display.svg.cloneNode(false)
@@ -118,7 +125,7 @@
         t.textContent = p.text || ''
         g.appendChild(t)
         g.setAttribute('transform', `translate(${p.x} ${p.y}) rotate(${p.angle})`)
-        g.appendChild(nodes[p.id].cloneNode(false))
+        g.appendChild(getPart(p.id))
         ns.appendChild(g)
       })
       result.appendChild(ns)
@@ -140,7 +147,7 @@
       packButton.name('stop pack')
       packer.start(showResult).then(showResult).then(() => menu.reset())
     },
-    generate: () => chooseParts(generator.generate().map((polygon) => ({ polygon })))
+    generate: () => chooseParts(generator.generate().map((path) => ({ path })))
   }
 
   genFolder.add(menu, 'generate')

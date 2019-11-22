@@ -48,9 +48,9 @@ class BasePacker {
     return this.tolerance * this.clipperScale
   }
 
-  toClipper (polygon) {
+  toClipper (points) {
     const cS = this.clipperScale
-    return polygon.map((p) => ({X: p.x * cS, Y: p.y * cS}))
+    return points.map((p) => ({X: p.x * cS, Y: p.y * cS}))
   }
 
   getWorker () {
@@ -150,7 +150,7 @@ class BasePacker {
   }
 
   createPart (part) {
-    const poly = this.toClipper(part.polygon)
+    const poly = this.toClipper(part.path)
     const simple = Clipper.SimplifyPolygon(poly, NonZero)
     if(!simple || simple.length === 0) return
 
@@ -163,8 +163,11 @@ class BasePacker {
     const area = Clipper.Area(path)
     if (area > 0) path.reverse()
 
+    const numPoints = part.path.length
     const scaled = Math.abs(area / this.areaScale)
-    this.parts.set(part.id, new Part(part.id, path, scaled))
+    const sum = part.path.reduce((o, p) => [o[0] + p.x, o[1] + p.y], [0, 0])
+    const centroid = { x: sum[0] / numPoints, y: sum[1] / numPoints }
+    this.parts.set(part.id, new Part(part.id, path, centroid, scaled))
   }
 
   async findPlacements (placements, onProgress) {

@@ -1,4 +1,4 @@
-import { Path, grahamScan } from './geometry.js'
+import { Path } from './geometry.js'
 
 const RIGHT_ANGLES = { a: 0, b: 90, c: 180, d: 270 }
 const RIGHT_TRANSFORMS = {
@@ -9,23 +9,28 @@ const RIGHT_TRANSFORMS = {
 }
 
 const quarter = (angle) => angle % (Math.PI / 2)
+const getPoint = (a, p) => p[p.angles.map(quarter).indexOf(a)]
 
 class Part {
 
-  constructor (id, path, area) {
+  constructor (id, path, origin, area) {
     this.id = id
     this.area = area
-    this.path = new Path(...path)
+    this.origin = origin
+
+    const original = new Path(...path)
+    this.path = original.translate(original.centroid.neg)
 
     // rotating calipers for oriented bounding boxes
-    const angles = [0, ...this.path.angles]
-    if (this.path.length > 3) {
-      angles.push(...(new Path(...grahamScan(Array.from(this.path)))).angles)
-    }
+    const angles = [0, ...this.path.angles, ...this.path.hull.angles]
 
-    this.rotations = [...new Set(angles.map(quarter))].map((angle) => ({
-      angle, path: this.path.rotate(angle)
-    })).sort((a, b) => a.path.bounds.area - b.path.bounds.area)
+    this.rotations = [...new Set(angles.map(quarter))].map((angle) => {
+      const p = getPoint(angle, this.path) || getPoint(angle, this.path.hull)
+      if (angle === 0 || !p) return { angle, path: this.path }
+      const r = this.path.translate(p.neg).rotate(angle)
+      const path = r.translate(r.centroid.neg)
+      return { angle, path }
+    }).sort((a, b) => a.path.bounds.area - b.path.bounds.area)
   }
 
   randomRo (max) {
@@ -54,8 +59,7 @@ class Placement {
     this.di = di
     this.angle = ((angle * 180 / Math.PI) + RIGHT_ANGLES[di]) || 0
 
-    const { X, Y } = path[0]
-    this.origin = { X: -X, Y: -Y }
+    this.origin = path[0].neg
     this.path = path.translate(this.origin)
 
     this.X = null

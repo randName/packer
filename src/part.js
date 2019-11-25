@@ -29,7 +29,7 @@ class Part {
       if (angle === 0 || !p) return { angle, path: this.path }
       const r = this.path.translate(p.neg).rotate(angle)
       const path = r.translate(r.centroid.neg)
-      return { angle, path }
+      return { angle: -angle, path }
     }).sort((a, b) => a.path.bounds.area - b.path.bounds.area)
   }
 
@@ -57,7 +57,7 @@ class Placement {
     this.part = part
     this.ro = ro
     this.di = di
-    this.angle = ((angle * 180 / Math.PI) + RIGHT_ANGLES[di]) || 0
+    this.angle = (360 - (angle * 180 / Math.PI) + RIGHT_ANGLES[di]) || 0
 
     this.origin = path[0].neg
     this.path = path.translate(this.origin)

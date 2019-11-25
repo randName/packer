@@ -161,4 +161,4 @@ class Bounds extends Path {
   }
 }
 
-export { grahamScan, Path, Bounds }
+export { grahamScan, Vec, Path, Bounds }

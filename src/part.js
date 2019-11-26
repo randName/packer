@@ -9,7 +9,6 @@ const RIGHT_TRANSFORMS = {
 }
 
 const quarter = (angle) => angle % (Math.PI / 2)
-const getPoint = (a, p) => p[p.angles.map(quarter).indexOf(a)]
 
 class Part {
 
@@ -24,12 +23,9 @@ class Part {
     // rotating calipers for oriented bounding boxes
     const angles = [0, ...this.path.angles, ...this.path.hull.angles]
 
-    this.rotations = [...new Set(angles.map(quarter))].map((angle) => {
-      const p = getPoint(angle, this.path) || getPoint(angle, this.path.hull)
-      if (angle === 0 || !p) return { angle, path: this.path }
-      const r = this.path.translate(p.neg).rotate(angle)
-      const path = r.translate(r.centroid.neg)
-      return { angle: -angle, path }
+    this.rotations = [...new Set(angles.map(quarter))].map((a) => {
+      const r = this.path.rotate(a)
+      return { angle: -a, path: r.translate(r.centroid.neg) }
     }).sort((a, b) => a.path.bounds.area - b.path.bounds.area)
   }
 

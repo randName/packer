@@ -57,12 +57,12 @@ class BasePacker {
     return new Worker('src/worker.js')
   }
 
-  offset (path) {
-    if (this.spacing < 0.001) return path
+  offset (path, distance) {
+    if (distance < 1) return path
     const np = new ClipperLib.Paths()
     const co = new ClipperLib.ClipperOffset(2, this.clipperTolerance)
     co.AddPath(path, ClipperLib.JoinType.jtRound, ClipperLib.EndType.etClosedPolygon)
-    co.Execute(np, 0.5 * this.spacing * this.clipperScale)
+    co.Execute(np, distance)
     return new Path(...np[0])
   }
 
@@ -135,10 +135,11 @@ class BasePacker {
   }
 
   render (prefab) {
+    const offset = 0.5 * this.spacing * this.clipperScale
     return (prefab || this.createPrefab()).map((p) => {
       const part = this.parts.get(p.id)
       const rot = part.getRotation(p, this.rotations)
-      const path = this.offset(rot.path).transform(...rot.transform)
+      const path = this.offset(rot.path, offset).transform(...rot.transform)
       return part.render({ ...rot, part, path })
     })
   }

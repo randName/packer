@@ -154,6 +154,11 @@
   const packButton = gui.add(menu, 'pack')
 
   menu.generate()
+
+  fetch('testPacks.json').then((r) => r.json()).then((r) => {
+    menu.testPacks = r
+    gui.add(menu, 'sample', Object.keys(r)).onChange((v) => chooseParts(r[v]))
+  })
   </script>
  </body>
 </html>

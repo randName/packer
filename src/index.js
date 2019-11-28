@@ -1,4 +1,5 @@
 import { BasePacker } from './base.js'
+import { SinglePacker } from './single.js'
 
 class Packer extends BasePacker {
 
@@ -37,4 +38,5 @@ class Packer extends BasePacker {
 
 export {
   Packer,
+  SinglePacker,
 }
